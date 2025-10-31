@@ -6,14 +6,14 @@ const menu = [
     name: "Kopi Susu Creamy (Hot)",
     price: 20000,
     category: "Signature",
-    image: "/images/kopi-susu-creamy.jpg",
+    image: "/kopi-susu-hot.jpg",
   },
   {
     id: 2,
     name: "Kopi Susu Creamy (Ice)",
     price: 22000,
     category: "Signature",
-    image: "/images/kopi-susu-creamy.jpg",
+    image: "/kopi-susu-ice.jpg",
   },
   {
     id: 3,
@@ -27,7 +27,7 @@ const menu = [
     name: "Kopi Susu Aren (Ice)",
     price: 22000,
     category: "Signature",
-    image: "/images/kopi-susu-aren.jpg",
+    image: "/kopi-aren-ice.jpg",
   },
   {
     id: 5,
@@ -337,4 +337,8 @@ const menu = [
   },
 ];
 
+// tambahkan named export
+export const menuItem = menu;
+
+// default export tetap
 export default menu;

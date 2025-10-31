@@ -42,22 +42,15 @@ export default function RootLayout({
 }) {
   return (
     <html lang="id" className={`${poppins.variable} ${dancing.variable}`}>
+      {/* pt-14 = tinggi Navbar (h-14) agar konten tidak ketimpa karena Navbar fixed */}
       <body
-        className={`${poppins.className} min-h-dvh bg-[#FFF8E7] text-gray-800`}
+        className={`${poppins.className} min-h-dvh bg-[#FFF8E7] text-gray-800 pt-14`}
       >
         <Providers>
-          {/* Header */}
-          <header>
-            <Navbar />
-          </header>
+          {/* Header (Navbar sudah fixed di komponennya) */}
+          <Navbar />
 
-          {/* 
-            Wrapper responsif untuk seluruh halaman:
-            - px-4: padding nyaman di HP
-            - sm:px-6 lg:px-8: padding lebih longgar di layar besar
-            - max-w-7xl mx-auto: lebar konten dibatasi rapi di desktop
-            - py-4 sm:py-6: jarak vertikal konsisten
-          */}
+          {/* Wrapper responsif halaman */}
           <main className="min-h-dvh px-4 sm:px-6 lg:px-8 py-4 sm:py-6 max-w-7xl mx-auto">
             {children}
           </main>

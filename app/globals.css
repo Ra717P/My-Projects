@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Define CSS variables */
+:root {
+  --background: #FFF8E7; /* Matches bg-[#FFF8E7] */
+  --foreground: #1F2937; /* Matches text-gray-800 */
+}
+
 /* Custom styles */
 body {
   font-family: "Poppins", Arial, Helvetica, sans-serif;
