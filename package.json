@@ -13,7 +13,8 @@
     "seed": "node -r dotenv/config scripts/seed.ts"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.76.1",
+    "@supabase/ssr": "0.7.0",
+    "@supabase/supabase-js": "2.78.0",
     "lucide-react": "^0.546.0",
     "midtrans-client": "^1.4.3",
     "next": "15.5.4",
