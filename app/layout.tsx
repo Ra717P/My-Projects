@@ -1,9 +1,10 @@
 // app/layout.tsx
 import type { Metadata, Viewport } from "next";
+import type { ReactNode } from "react";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
-import { Providers } from "@/components/Providers";
+import { Providers } from "@/components/Providers"; // ✅ named import yang benar
 import { Poppins, Dancing_Script } from "next/font/google";
 
 // Font setup
@@ -35,11 +36,7 @@ export const viewport: Viewport = {
   themeColor: "#FFF8E7",
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="id" className={`${poppins.variable} ${dancing.variable}`}>
       {/* pt-14 = tinggi Navbar (h-14) agar konten tidak ketimpa karena Navbar fixed */}

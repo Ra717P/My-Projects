@@ -33,20 +33,18 @@ export default function CartPage() {
         name: it.name,
         priceNumber: toNumberIDR(it.price),
         priceDisplay: formatIDR(toNumberIDR(it.price)),
-        quantity: it.quantity ?? 1,
+        qty: it.qty ?? 1,
         image: it.image ?? null,
       })),
     [cart]
   );
 
   const total = useMemo(
-    () => items.reduce((a, b) => a + b.priceNumber * b.quantity, 0),
+    () => items.reduce((a, b) => a + b.priceNumber * b.qty, 0),
     [items]
   );
 
   return (
-    // Catatan: kalau main layout-mu sudah kasih padding/container,
-    // kamu boleh ganti <div className="container ..."> jadi <section className="space-y-4 sm:space-y-6">
     <div className="container mx-auto px-6 py-10">
       <h1 className="text-2xl font-semibold mb-6">Keranjang</h1>
 
@@ -62,9 +60,7 @@ export default function CartPage() {
           <ul className="divide-y divide-gray-200 bg-white rounded-xl border">
             {items.map((it) => (
               <li key={it.id} className="p-3 sm:p-4">
-                {/* HP: 2 baris (konten lalu aksi), Desktop: 1 baris */}
                 <div className="flex flex-col gap-3 sm:gap-0 sm:flex-row sm:items-center sm:justify-between">
-                  {/* Baris 1 (kiri): gambar + nama + qty x harga */}
                   <div className="flex items-center gap-3">
                     {it.image && (
                       <img
@@ -77,12 +73,11 @@ export default function CartPage() {
                     <div>
                       <p className="font-medium leading-tight">{it.name}</p>
                       <p className="text-sm text-gray-600">
-                        {it.quantity} × {it.priceDisplay}
+                        {it.qty} × {it.priceDisplay}
                       </p>
                     </div>
                   </div>
 
-                  {/* Baris 2 (kanan di desktop / bawah di HP): aksi */}
                   <div className="flex items-center gap-2 sm:gap-3">
                     <button
                       onClick={() => removeFromCart(it.id)}
@@ -90,10 +85,9 @@ export default function CartPage() {
                     >
                       Hapus
                     </button>
+
                     <button
-                      onClick={() =>
-                        addToCart({ ...it, quantity: (it.quantity ?? 1) + 1 })
-                      }
+                      onClick={() => addToCart(it, 1)}
                       className="px-3 py-2 rounded-lg border hover:bg-gray-50 active:scale-[0.98] transition text-sm sm:text-base"
                     >
                       +1
@@ -104,13 +98,11 @@ export default function CartPage() {
             ))}
           </ul>
 
-          {/* Ringkasan total */}
           <div className="mt-6 flex items-center justify-between">
             <p className="font-semibold text-lg">Total</p>
             <p className="font-bold text-lg">{formatIDR(total)}</p>
           </div>
 
-          {/* Aksi bawah */}
           <div className="mt-6 flex flex-col sm:flex-row gap-3">
             <button
               onClick={clearCart}

@@ -16,7 +16,6 @@
     "@supabase/ssr": "0.7.0",
     "@supabase/supabase-js": "2.78.0",
     "lucide-react": "^0.546.0",
-    "midtrans-client": "^1.4.3",
     "next": "15.5.4",
     "react": "19.2.0",
     "react-dom": "19.2.0",

@@ -1,116 +1,222 @@
-// POST /api/checkout -> buat transaksi Midtrans Snap
-import { NextResponse } from "next/server";
-import { supabaseService } from "@/lib/supabase/server";
-import midtransClient from "midtrans-client";
+import { createClient } from "@supabase/supabase-js";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function supabaseService() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!url || !key)
+    throw new Error("ENV Supabase belum lengkap (URL / SERVICE_ROLE).");
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+// helper untuk error yang rapi + ada step
+function fail(step: string, message: string, status = 500, extra?: any) {
+  // log di terminal biar kamu lihat detailnya
+  console.error(`[orders][${step}] ${message}`, extra ?? "");
+  return json(
+    {
+      ok: false,
+      step,
+      message,
+      // extra hanya untuk debugging (boleh kamu hapus kalau sudah beres)
+      extra: extra ?? null,
+    },
+    status
+  );
+}
 
 export async function POST(req: Request) {
+  const supabase = (() => {
+    try {
+      return supabaseService();
+    } catch (e: any) {
+      return null;
+    }
+  })();
+
+  if (!supabase) {
+    return fail(
+      "ENV",
+      "Tidak bisa membuat Supabase client. Cek NEXT_PUBLIC_SUPABASE_URL & SUPABASE_SERVICE_ROLE_KEY",
+      500
+    );
+  }
+
   let body: any;
   try {
     body = await req.json();
-  } catch {
-    return NextResponse.json({ message: "Invalid JSON" }, { status: 400 });
+  } catch (e: any) {
+    return fail("PARSE_BODY", "Body JSON tidak valid", 400, e?.message);
   }
 
-  const { amount, table_no, customer_name, items } = body || {};
-
-  // Validasi dasar
-  if (!Number.isInteger(amount) || amount <= 0) {
-    return NextResponse.json({ message: "Invalid amount" }, { status: 400 });
-  }
-  if (!Number.isInteger(table_no) || table_no <= 0) {
-    return NextResponse.json(
-      { message: "Invalid table number" },
-      { status: 400 }
-    );
-  }
-  if (!customer_name || typeof customer_name !== "string") {
-    return NextResponse.json(
-      { message: "Invalid customer name" },
-      { status: 400 }
+  // ============= STEP: VALIDATE ITEMS =============
+  if (!Array.isArray(body?.items) || body.items.length === 0) {
+    return fail(
+      "VALIDATE_ITEMS",
+      "Items wajib diisi (minimal 1)",
+      400,
+      body?.items
     );
   }
 
-  // Cek env Midtrans
-  const serverKey = process.env.MIDTRANS_SERVER_KEY;
-  const clientKey = process.env.MIDTRANS_CLIENT_KEY;
-  const isProduction = process.env.MIDTRANS_IS_PRODUCTION === "true";
-  const baseUrl = process.env.APP_BASE_URL;
-  if (!serverKey || !clientKey || !baseUrl) {
-    return NextResponse.json(
-      { message: "Missing Midtrans configuration" },
-      { status: 500 }
+  type IncomingItem = {
+    menuItemId?: number | string;
+    id?: number | string;
+    menu_item_id?: number | string;
+    qty?: number | string;
+    quantity?: number | string;
+  };
+
+  const itemsReq = (body.items as IncomingItem[]).map((it) => {
+    const menuItemId = Number(it.menuItemId ?? it.id ?? it.menu_item_id);
+    const qtyRaw = Number(it.qty ?? it.quantity ?? 1);
+    const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? Math.round(qtyRaw) : 1;
+    return { menuItemId, qty };
+  });
+
+  if (
+    itemsReq.some((x) => !Number.isInteger(x.menuItemId) || x.menuItemId <= 0)
+  ) {
+    return fail("VALIDATE_ITEMS", "Ada menuItemId tidak valid", 400, itemsReq);
+  }
+  if (itemsReq.some((x) => !Number.isInteger(x.qty) || x.qty <= 0)) {
+    return fail("VALIDATE_ITEMS", "Ada qty tidak valid", 400, itemsReq);
+  }
+
+  // ============= STEP: FETCH MENU (ANTI MANIPULASI) =============
+  const uniqueIds = Array.from(new Set(itemsReq.map((x) => x.menuItemId)));
+
+  const { data: menuRows, error: menuErr } = await supabase
+    .from("menu_items")
+    .select("id, name, price")
+    .in("id", uniqueIds);
+
+  if (menuErr) {
+    // biasanya: tabel tidak ada, kolom tidak ada, RLS, atau koneksi
+    return fail("FETCH_MENU", "Gagal mengambil data menu", 500, menuErr);
+  }
+  if (!menuRows || menuRows.length === 0) {
+    return fail(
+      "FETCH_MENU",
+      "Menu tidak ditemukan (tabel kosong atau ID tidak cocok)",
+      400,
+      {
+        uniqueIds,
+        menuRows,
+      }
     );
   }
 
-  // 1️⃣ Simpan order PENDING di Supabase
-  const orderId = `ORDER-${Date.now()}`;
-  const svc = supabaseService();
-  const { data: saved, error: saveErr } = await svc
+  const priceById = new Map<number, number>(
+    menuRows.map((m: any) => [Number(m.id), Number(m.price)])
+  );
+  const nameById = new Map<number, string>(
+    menuRows.map((m: any) => [Number(m.id), String(m.name)])
+  );
+
+  const missingIds = uniqueIds.filter((id) => !priceById.has(id));
+  if (missingIds.length > 0) {
+    return fail("FETCH_MENU", "Ada ID menu yang tidak ada di DB", 400, {
+      missingIds,
+      uniqueIds,
+    });
+  }
+
+  // ============= STEP: BUILD ITEMS + TOTAL =============
+  const item_details = itemsReq.map((it) => {
+    const price = Math.round(Number(priceById.get(it.menuItemId)));
+    const name = (nameById.get(it.menuItemId) ?? `Item ${it.menuItemId}`).slice(
+      0,
+      50
+    );
+    return { id: it.menuItemId, name, price, qty: it.qty };
+  });
+
+  const invalidPrice = item_details.filter(
+    (x) => !Number.isFinite(x.price) || x.price <= 0
+  );
+  if (invalidPrice.length > 0) {
+    return fail(
+      "CALC_TOTAL",
+      "Ada item dengan harga tidak valid",
+      400,
+      invalidPrice
+    );
+  }
+
+  const gross_amount = item_details.reduce(
+    (sum, it) => sum + it.price * it.qty,
+    0
+  );
+  if (!Number.isFinite(gross_amount) || gross_amount <= 0) {
+    return fail(
+      "CALC_TOTAL",
+      "Total tidak valid setelah dihitung server",
+      400,
+      { gross_amount, item_details }
+    );
+  }
+
+  // ============= STEP: INSERT ORDER =============
+  const customer = body.customer || {};
+  const customerName = customer.first_name
+    ? `${customer.first_name}${
+        customer.last_name ? " " + customer.last_name : ""
+      }`
+    : body.customerName ?? null;
+
+  // NOTE: aku sengaja TIDAK kirim customer_phone lagi,
+  // biar aman kalau kolomnya tidak ada di tabel orders.
+  const { data: order, error: orderErr } = await supabase
     .from("orders")
     .insert({
-      order_id: orderId,
-      table_no,
-      customer_name,
-      amount,
-      status: "PENDING",
-      raw_payload: body,
+      customer_name: customerName,
+      note: body.note || null,
+      total: gross_amount,
+      status: "SETTLEMENT",
     })
     .select("*")
     .single();
 
-  if (saveErr) {
-    return NextResponse.json({ message: saveErr.message }, { status: 500 });
+  if (orderErr || !order) {
+    return fail("INSERT_ORDER", "Gagal membuat order", 500, orderErr);
   }
 
-  // 2️⃣ Buat transaksi Snap Midtrans
-  const snap = new midtransClient.Snap({
-    isProduction,
-    serverKey,
-    clientKey,
-  });
+  // ============= STEP: INSERT ORDER ITEMS =============
+  const itemsInsert = item_details.map((it) => ({
+    order_id: order.id,
+    menu_item_id: Number(it.id),
+    qty: it.qty,
+    price: it.price,
+  }));
 
-  const parameter = {
-    transaction_details: {
-      order_id: orderId,
-      gross_amount: amount,
-    },
-    item_details: (items || []).map((it: any) => ({
-      id: it.id,
-      name: it.name,
-      price: it.price,
-      quantity: it.qty,
-    })),
-    customer_details: {
-      first_name: customer_name,
-      email: "guest@sisikopi.app", // dummy
-    },
-    callbacks: {
-      finish: `${baseUrl}/payment/finish?order_id=${orderId}`,
-      error: `${baseUrl}/payment/error?order_id=${orderId}`,
-      pending: `${baseUrl}/payment/pending?order_id=${orderId}`,
-    },
-    credit_card: { secure: true },
-  };
+  const { error: itemsErr } = await supabase
+    .from("order_items")
+    .insert(itemsInsert);
 
-  try {
-    const trx = await snap.createTransaction(parameter);
+  if (itemsErr) {
+    return fail("INSERT_ITEMS", "Gagal menyimpan order_items", 500, itemsErr);
+  }
 
-    // Update token & redirect_url
-    await svc
-      .from("orders")
-      .update({ snap_token: trx.token, snap_redirect_url: trx.redirect_url })
-      .eq("id", saved.id);
+  const orderId = String(order.order_code ?? order.id);
 
-    return NextResponse.json({
-      token: trx.token,
-      redirect_url: trx.redirect_url,
+  return json(
+    {
+      ok: true,
+      message: "Pembayaran sukses!",
       orderId,
-    });
-  } catch (e: any) {
-    await svc.from("orders").update({ status: "CANCEL" }).eq("id", saved.id);
-    return NextResponse.json(
-      { message: e?.message || "Midtrans transaction failed" },
-      { status: 500 }
-    );
-  }
+      status: "SETTLEMENT",
+      total: gross_amount,
+    },
+    200
+  );
 }

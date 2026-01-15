@@ -1,191 +1,208 @@
+import { createClient } from "@supabase/supabase-js";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import midtransClient from "midtrans-client";
-import { createClient } from "@supabase/supabase-js";
-
-const mask = (v?: string) => (v ? v.slice(0, 6) + "..." : "undefined");
-
-// helper: supabase service role (server-only)
 function supabaseService() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!url || !key) {
-    throw new Error("Supabase env tidak lengkap (URL/Service Role Key).");
+    throw new Error("ENV Supabase belum lengkap (URL / SERVICE_ROLE_KEY).");
   }
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
-export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-
-    const isProd = process.env.MIDTRANS_IS_PRODUCTION === "true";
-    const serverKey = process.env.MIDTRANS_SERVER_KEY?.trim();
-
-    // Debug aman (jangan log full key)
-    console.log("[midtrans] isProd=", isProd, " serverKey=", mask(serverKey));
-
-    if (!serverKey) {
-      return json({ message: "Server Key kosong/tidak terbaca di env" }, 500);
-    }
-    if (!Array.isArray(body?.items) || body.items.length === 0) {
-      return json({ message: "Items wajib diisi (minimal 1)" }, 400);
-    }
-
-    // 1) Validasi & normalisasi payload minimal
-    const itemsReq: { menuItemId: number; qty: number }[] = body.items.map(
-      (it: any) => ({
-        menuItemId: Number(it.menuItemId ?? it.id ?? it.menu_item_id),
-        qty: Math.max(1, Math.round(Number(it.qty ?? it.quantity ?? 1))),
-      })
-    );
-    if (
-      itemsReq.some((x) => !Number.isFinite(x.menuItemId) || x.menuItemId <= 0)
-    ) {
-      return json({ message: "Item ID tidak valid" }, 400);
-    }
-
-    // 2) Ambil harga dari Supabase (anti manipulasi harga di client)
-    const supabase = supabaseService();
-    const ids = itemsReq.map((x) => x.menuItemId);
-    const { data: menuRows, error: menuErr } = await supabase
-      .from("menu_items")
-      .select("id, name, price")
-      .in("id", ids);
-
-    if (menuErr) {
-      console.error("[supabase] menu error:", menuErr);
-      return json({ message: "Gagal mengambil data menu" }, 500);
-    }
-    if (!menuRows || menuRows.length === 0) {
-      return json({ message: "Menu tidak ditemukan" }, 400);
-    }
-
-    const priceById = new Map(
-      menuRows.map((m) => [Number(m.id), Number(m.price)])
-    );
-    const nameById = new Map(
-      menuRows.map((m) => [Number(m.id), String(m.name)])
-    );
-
-    // 3) Bangun item_details untuk Midtrans & hitung total server-side
-    const item_details = itemsReq.map((it) => ({
-      id: String(it.menuItemId),
-      price: Math.round(priceById.get(it.menuItemId) ?? 0),
-      quantity: it.qty,
-      name: String(
-        nameById.get(it.menuItemId) ?? `Item ${it.menuItemId}`
-      ).slice(0, 50),
-    }));
-
-    if (
-      item_details.some((it) => !Number.isFinite(it.price) || it.price <= 0)
-    ) {
-      return json({ message: "Terdapat item dengan harga tidak valid" }, 400);
-    }
-
-    const gross_amount = item_details.reduce(
-      (sum, it) => sum + it.price * it.quantity,
-      0
-    );
-    if (!Number.isFinite(gross_amount) || gross_amount <= 0) {
-      return json(
-        { message: "Total tidak valid setelah perhitungan server" },
-        400
-      );
-    }
-
-    // 4) Buat order PENDING di Supabase (pakai total server-side)
-    const customer = body.customer || {};
-    const { data: order, error: orderErr } = await supabase
-      .from("orders")
-      .insert({
-        customer_name: customer.first_name
-          ? `${customer.first_name}${
-              customer.last_name ? " " + customer.last_name : ""
-            }`
-          : body.customerName ?? null,
-        customer_phone: customer.phone || body.customerPhone || null,
-        note: body.note || null,
-        total: gross_amount,
-        status: "PENDING",
-      })
-      .select("*")
-      .single();
-
-    if (orderErr || !order) {
-      console.error("[supabase] create order error:", orderErr);
-      return json({ message: "Gagal membuat order" }, 500);
-    }
-
-    // 5) Simpan order_items (snapshot harga)
-    const itemsInsert = item_details.map((it) => ({
-      order_id: order.id,
-      menu_item_id: Number(it.id),
-      qty: it.quantity,
-      price: it.price,
-    }));
-
-    const { error: itemsErr } = await supabase
-      .from("order_items")
-      .insert(itemsInsert);
-    if (itemsErr) {
-      console.error("[supabase] insert order_items error:", itemsErr);
-      return json({ message: "Gagal menyimpan item pesanan" }, 500);
-    }
-
-    // 6) Order ID untuk Midtrans → gunakan order_code dari DB agar rapi & unik
-    const orderId = String(order.order_code ?? `ORD-${Date.now()}`);
-
-    // 7) Buat transaksi Snap Midtrans (QRIS saja)
-    const snap = new (midtransClient as any).Snap({
-      isProduction: isProd,
-      serverKey, // clientKey tidak diperlukan di server
-    });
-
-    const parameter = {
-      transaction_details: {
-        order_id: orderId,
-        gross_amount,
-      },
-      item_details,
-      customer_details:
-        customer.first_name || customer.phone ? customer : undefined,
-      enabled_payments: ["other_qris"],
-      expiry: { unit: "minutes", duration: 15 },
-    };
-
-    const tx = await snap.createTransaction(parameter);
-
-    // (Opsional) simpan token/redirect_url ke kolom khusus bila kamu menambahkan field pada tabel orders
-    // await supabase.from("orders").update({ midtrans_token: tx.token, midtrans_redirect: tx.redirect_url }).eq("id", order.id);
-
-    return json(
-      {
-        message: "Token berhasil dibuat",
-        token: tx.token,
-        redirect_url: tx.redirect_url,
-        orderId, // gunakan ini untuk tracking/redirect
-      },
-      200
-    );
-  } catch (e: any) {
-    // Ambil pesan dari Midtrans jika ada
-    const apiMsg =
-      e?.ApiResponse?.error_messages?.[0] ||
-      e?.ApiResponse?.status_message ||
-      e?.message;
-
-    console.error("[midtrans] error:", apiMsg, e);
-    return json({ message: apiMsg || "Gagal membuat pesanan" }, 500);
-  }
-}
-
-// Helper response JSON
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { "content-type": "application/json" },
   });
+}
+
+function fail(step: string, message: string, status = 500, extra?: any) {
+  console.error(`[orders][${step}] ${message}`, extra ?? "");
+  return json({ ok: false, step, message, extra: extra ?? null }, status);
+}
+
+export async function POST(req: Request) {
+  let supabase;
+  try {
+    supabase = supabaseService();
+  } catch (e: any) {
+    return fail("ENV", e?.message || "Supabase client gagal dibuat");
+  }
+
+  let body: any;
+  try {
+    body = await req.json();
+  } catch (e: any) {
+    return fail("PARSE_BODY", "Body JSON tidak valid", 400, e?.message);
+  }
+
+  // ========== VALIDATE ITEMS ==========
+  if (!Array.isArray(body?.items) || body.items.length === 0) {
+    return fail(
+      "VALIDATE_ITEMS",
+      "Items wajib diisi (minimal 1)",
+      400,
+      body?.items
+    );
+  }
+
+  type IncomingItem = {
+    menuItemId?: number | string;
+    id?: number | string;
+    menu_item_id?: number | string;
+    qty?: number | string;
+    quantity?: number | string;
+  };
+
+  const itemsReq = (body.items as IncomingItem[]).map((it) => {
+    const menuItemId = Number(it.menuItemId ?? it.id ?? it.menu_item_id);
+    const qtyRaw = Number(it.qty ?? it.quantity ?? 1);
+    const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? Math.round(qtyRaw) : 1;
+    return { menuItemId, qty };
+  });
+
+  if (
+    itemsReq.some((x) => !Number.isInteger(x.menuItemId) || x.menuItemId <= 0)
+  ) {
+    return fail("VALIDATE_ITEMS", "Ada menuItemId tidak valid", 400, itemsReq);
+  }
+  if (itemsReq.some((x) => !Number.isInteger(x.qty) || x.qty <= 0)) {
+    return fail("VALIDATE_ITEMS", "Ada qty tidak valid", 400, itemsReq);
+  }
+
+  // ========== FETCH MENU ==========
+  const uniqueIds = Array.from(new Set(itemsReq.map((x) => x.menuItemId)));
+
+  const { data: menuRows, error: menuErr } = await supabase
+    .from("menu_items")
+    .select("id, name, price")
+    .in("id", uniqueIds);
+
+  if (menuErr) {
+    return fail("FETCH_MENU", "Gagal mengambil data menu", 500, menuErr);
+  }
+  if (!menuRows || menuRows.length === 0) {
+    return fail(
+      "FETCH_MENU",
+      "Menu tidak ditemukan (tabel kosong / ID tidak cocok)",
+      400,
+      { uniqueIds }
+    );
+  }
+
+  const priceById = new Map<number, number>(
+    menuRows.map((m: any) => [Number(m.id), Number(m.price)])
+  );
+  const nameById = new Map<number, string>(
+    menuRows.map((m: any) => [Number(m.id), String(m.name)])
+  );
+
+  const missingIds = uniqueIds.filter((id) => !priceById.has(id));
+  if (missingIds.length > 0) {
+    return fail("FETCH_MENU", "Ada ID menu yang tidak ada di DB", 400, {
+      missingIds,
+    });
+  }
+
+  // ========== CALC TOTAL ==========
+  const item_details = itemsReq.map((it) => {
+    const price = Math.round(Number(priceById.get(it.menuItemId)));
+    const name = (nameById.get(it.menuItemId) ?? `Item ${it.menuItemId}`).slice(
+      0,
+      50
+    );
+    return { id: it.menuItemId, name, price, qty: it.qty };
+  });
+
+  const invalidPrice = item_details.filter(
+    (x) => !Number.isFinite(x.price) || x.price <= 0
+  );
+  if (invalidPrice.length > 0) {
+    return fail(
+      "CALC_TOTAL",
+      "Ada item dengan harga tidak valid",
+      400,
+      invalidPrice
+    );
+  }
+
+  const gross_amount = item_details.reduce(
+    (sum, it) => sum + it.price * it.qty,
+    0
+  );
+  if (!Number.isFinite(gross_amount) || gross_amount <= 0) {
+    return fail(
+      "CALC_TOTAL",
+      "Total tidak valid setelah dihitung server",
+      400,
+      {
+        gross_amount,
+        item_details,
+      }
+    );
+  }
+
+  // ========== INSERT ORDER ==========
+  const customer = body.customer || {};
+  const customerName = customer.first_name
+    ? `${customer.first_name}${
+        customer.last_name ? " " + customer.last_name : ""
+      }`
+    : body.customerName ?? null;
+
+  // IMPORTANT:
+  // - Jangan paksa status "SETTLEMENT" karena kolom status kamu ENUM.
+  // - Kalau mau set status sukses, isi ENV ORDER_SUCCESS_STATUS dengan value enum yang valid.
+  const orderInsert: any = {
+    customer_name: customerName,
+    note: body.note || null,
+    total: gross_amount,
+  };
+
+  if (process.env.ORDER_SUCCESS_STATUS?.trim()) {
+    orderInsert.status = process.env.ORDER_SUCCESS_STATUS.trim();
+  }
+
+  const { data: order, error: orderErr } = await supabase
+    .from("orders")
+    .insert(orderInsert)
+    .select("*")
+    .single();
+
+  if (orderErr || !order) {
+    return fail("INSERT_ORDER", "Gagal membuat order", 500, orderErr);
+  }
+
+  // ========== INSERT ORDER ITEMS ==========
+  const itemsInsert = item_details.map((it) => ({
+    order_id: order.id,
+    menu_item_id: Number(it.id),
+    qty: it.qty,
+    price: it.price,
+  }));
+
+  const { error: itemsErr } = await supabase
+    .from("order_items")
+    .insert(itemsInsert);
+
+  if (itemsErr) {
+    return fail("INSERT_ITEMS", "Gagal menyimpan order_items", 500, itemsErr);
+  }
+
+  const orderId = String(order.order_code ?? order.id);
+
+  return json(
+    {
+      ok: true,
+      message: "Pembayaran sukses!",
+      orderId,
+      total: gross_amount,
+      // status dikembalikan dari DB kalau ada
+      status: order.status ?? null,
+    },
+    200
+  );
 }
