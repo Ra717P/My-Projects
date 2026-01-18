@@ -13,8 +13,8 @@
     "seed": "node -r dotenv/config scripts/seed.ts"
   },
   "dependencies": {
-    "@supabase/ssr": "0.7.0",
-    "@supabase/supabase-js": "2.78.0",
+    "@supabase/ssr": "^0.7.0",
+    "@supabase/supabase-js": "^2.90.1",
     "lucide-react": "^0.546.0",
     "next": "^15.5.7",
     "react": "19.2.0",
@@ -27,6 +27,7 @@
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",
     "autoprefixer": "^10.4.21",
+    "baseline-browser-mapping": "^2.9.15",
     "cross-env": "^7.0.3",
     "dotenv": "^16.4.5",
     "eslint": "^9.37.0",

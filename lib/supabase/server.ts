@@ -1,14 +1,28 @@
-// Server-only Supabase clients (Next Route Handlers / Server Actions).
-import { createClient } from "@supabase/supabase-js";
+// lib/supabase/server.ts
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 
-export function supabaseServer() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  return createClient(url, anon, { auth: { persistSession: false } });
-}
+export function createSupabaseServerClient() {
+  const cookieStore = cookies();
 
-export function supabaseService() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  return createClient(url, service, { auth: { persistSession: false } });
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
+          } catch {
+            // Server Components: set cookie bisa gagal, aman diabaikan
+          }
+        },
+      },
+    }
+  );
 }
