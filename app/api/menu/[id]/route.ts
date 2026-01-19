@@ -3,15 +3,15 @@ import { supabaseServer, supabaseService } from "@/lib/supabase/server";
 
 export async function GET(
   _req: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } },
 ) {
-  const { id } = await params;
+  const { id } = params;
   const numId = Number(id);
   if (!Number.isInteger(numId) || numId <= 0) {
     return NextResponse.json({ message: "Invalid id" }, { status: 400 });
   }
 
-  const supabase = supabaseServer();
+  const supabase = await supabaseServer();
   const { data, error } = await supabase
     .from("menu_items")
     .select("*")
@@ -24,7 +24,7 @@ export async function GET(
       /No rows|Results contain 0 rows/i.test((error as any)?.message || "");
     return NextResponse.json(
       { message: notFound ? "Not found" : error.message },
-      { status: notFound ? 404 : 500 }
+      { status: notFound ? 404 : 500 },
     );
   }
 
@@ -35,15 +35,15 @@ export async function GET(
 
 export async function DELETE(
   _req: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } },
 ) {
-  const { id } = await params;
+  const { id } = params;
   const numId = Number(id);
   if (!Number.isInteger(numId) || numId <= 0) {
     return NextResponse.json({ message: "Invalid id" }, { status: 400 });
   }
 
-  const svc = supabaseService();
+  const svc = await supabaseService();
   const { error } = await svc.from("menu_items").delete().eq("id", numId);
 
   if (error) {
