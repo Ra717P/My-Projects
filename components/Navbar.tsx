@@ -43,24 +43,12 @@ export default function Navbar() {
 
   async function loadAuth() {
     setLoadingAuth(true);
-
     try {
-      // getSession lebih stabil di client dibanding getUser
-      const { data } = await supabase.auth.getSession();
-      const user = data.session?.user ?? null;
+      const res = await fetch("/api/me", { cache: "no-store" });
+      const json = await res.json();
 
-      if (!user) {
-        setUserEmail(null);
-        setIsAdmin(false);
-        return;
-      }
-
-      setUserEmail(user.email ?? null);
-      await fetchRole(user.id);
-    } catch (e) {
-      if (!isAbortError(e)) console.error("loadAuth error:", e);
-      setUserEmail(null);
-      setIsAdmin(false);
+      setUserEmail(json.user?.email ?? null);
+      setIsAdmin(Boolean(json.isAdmin));
     } finally {
       setLoadingAuth(false);
     }

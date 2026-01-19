@@ -3,10 +3,10 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export type Role = "admin" | "user";
 
-const PROFILE_TABLE = "profiles"; // sesuaikan jika beda
+const PROFILE_TABLE = "profiles";
 
 export async function getUserRole(): Promise<Role | null> {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
 
   const { data: authData, error: authErr } = await supabase.auth.getUser();
   if (authErr || !authData.user) return null;
@@ -17,14 +17,14 @@ export async function getUserRole(): Promise<Role | null> {
     .from(PROFILE_TABLE)
     .select("role")
     .eq("id", userId)
-    .single();
+    .maybeSingle(); // <-- lebih aman dari single()
 
-  if (error || !data?.role) return "user"; // default aman: anggap user biasa
-  return data.role as Role;
+  if (error) return "user";
+  return (data?.role ?? "user") as Role;
 }
 
 export async function requireAdmin() {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient(); // <-- WAJIB await
 
   const { data: authData, error: authErr } = await supabase.auth.getUser();
   if (authErr || !authData.user) {
@@ -41,10 +41,10 @@ export async function requireAdmin() {
   const userId = authData.user.id;
 
   const { data: profile, error: profErr } = await supabase
-    .from("profiles")
+    .from(PROFILE_TABLE)
     .select("role")
     .eq("id", userId)
-    .single();
+    .maybeSingle(); // <-- lebih aman
 
   const role = (profile?.role ?? "user") as Role;
 
