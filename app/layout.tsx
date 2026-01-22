@@ -4,8 +4,12 @@ import type { ReactNode } from "react";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
-import { Providers } from "@/components/Providers"; // ✅ named import yang benar
+import { Providers } from "@/components/Providers";
 import { Poppins, Dancing_Script } from "next/font/google";
+
+// ✅ ambil role dari server
+import { getUserRole } from "@/lib/admin";
+import type { Role } from "@/lib/admin";
 
 // Font setup
 const poppins = Poppins({
@@ -29,14 +33,20 @@ export const metadata: Metadata = {
   icons: { icon: "/favicon.ico" },
 };
 
-// Viewport (dipisah sesuai aturan Next.js)
+// Viewport
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   themeColor: "#FFF8E7",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const role: Role | null = await getUserRole();
+
   return (
     <html lang="id" className={`${poppins.variable} ${dancing.variable}`}>
       {/* pt-14 = tinggi Navbar (h-14) agar konten tidak ketimpa karena Navbar fixed */}
@@ -45,7 +55,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       >
         <Providers>
           {/* Header (Navbar sudah fixed di komponennya) */}
-          <Navbar />
+          <Navbar initialRole={role} />
 
           {/* Wrapper responsif halaman */}
           <main className="min-h-dvh px-4 sm:px-6 lg:px-8 py-4 sm:py-6 max-w-7xl mx-auto">

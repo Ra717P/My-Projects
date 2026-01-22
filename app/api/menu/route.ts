@@ -4,9 +4,15 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 export async function GET() {
   const supabase = await createSupabaseServerClient();
 
-  const { data, error } = await supabase.from("menu").select("*");
-  if (error)
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  const { data, error } = await supabase
+    .from("menu_items") // ✅ ganti dari "menu"
+    .select("*")
+    .order("created_at", { ascending: false });
 
-  return NextResponse.json(data);
+  if (error) {
+    console.error(error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ data });
 }

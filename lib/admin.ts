@@ -1,9 +1,13 @@
 // lib/admin.ts
+import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export type Role = "admin" | "user";
-
 const PROFILE_TABLE = "profiles";
+
+function normalizeRole(role: unknown): Role {
+  return role === "admin" ? "admin" : "user";
+}
 
 export async function getUserRole(): Promise<Role | null> {
   const supabase = await createSupabaseServerClient();
@@ -17,14 +21,14 @@ export async function getUserRole(): Promise<Role | null> {
     .from(PROFILE_TABLE)
     .select("role")
     .eq("id", userId)
-    .maybeSingle(); // <-- lebih aman dari single()
+    .maybeSingle();
 
   if (error) return "user";
-  return (data?.role ?? "user") as Role;
+  return normalizeRole(data?.role);
 }
 
 export async function requireAdmin() {
-  const supabase = await createSupabaseServerClient(); // <-- WAJIB await
+  const supabase = await createSupabaseServerClient();
 
   const { data: authData, error: authErr } = await supabase.auth.getUser();
   if (authErr || !authData.user) {
@@ -44,9 +48,9 @@ export async function requireAdmin() {
     .from(PROFILE_TABLE)
     .select("role")
     .eq("id", userId)
-    .maybeSingle(); // <-- lebih aman
+    .maybeSingle();
 
-  const role = (profile?.role ?? "user") as Role;
+  const role = normalizeRole(profile?.role);
 
   if (profErr || role !== "admin") {
     return {

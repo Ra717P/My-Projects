@@ -7,21 +7,26 @@ import CartIcon from "@/components/CartIcon";
 import LoginModal from "@/components/auth/LoginModal";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
+type Role = "admin" | "user" | null;
+
 function isAbortError(err: any) {
   return (
     err?.name === "AbortError" || String(err?.message ?? "").includes("aborted")
   );
 }
 
-export default function Navbar() {
+export default function Navbar({ initialRole }: { initialRole: Role }) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [openLogin, setOpenLogin] = useState(false);
 
+  // ✅ render awal konsisten dari server
+  const [role, setRole] = useState<Role>(initialRole);
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
   const [loadingAuth, setLoadingAuth] = useState(true);
 
-  async function fetchRole(userId: string) {
+  const isAdmin = role === "admin";
+
+  async function fetchRole(userId: string): Promise<Role> {
     try {
       const { data, error } = await supabase
         .from("profiles")
@@ -29,60 +34,71 @@ export default function Navbar() {
         .eq("id", userId)
         .maybeSingle();
 
-      if (error) {
-        setIsAdmin(false);
-        return;
-      }
-
-      setIsAdmin((data?.role ?? "user") === "admin");
+      if (error) return "user";
+      return (data?.role ?? "user") === "admin" ? "admin" : "user";
     } catch (e) {
       if (!isAbortError(e)) console.error("fetchRole error:", e);
-      setIsAdmin(false);
-    }
-  }
-
-  async function loadAuth() {
-    setLoadingAuth(true);
-    try {
-      const res = await fetch("/api/me", { cache: "no-store" });
-      const json = await res.json();
-
-      setUserEmail(json.user?.email ?? null);
-      setIsAdmin(Boolean(json.isAdmin));
-    } finally {
-      setLoadingAuth(false);
+      return "user";
     }
   }
 
   useEffect(() => {
-    // jangan biarkan Promise reject tanpa catch
-    void loadAuth().catch((e) => {
-      if (!isAbortError(e)) console.error("loadAuth uncaught:", e);
-      setLoadingAuth(false);
-    });
+    let active = true;
+
+    async function syncFromSession() {
+      setLoadingAuth(true);
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (!active) return;
+
+        if (error || !data?.user) {
+          setUserEmail(null);
+          setRole(null);
+          return;
+        }
+
+        const user = data.user;
+        setUserEmail(user.email ?? null);
+
+        const newRole = await fetchRole(user.id);
+        if (!active) return;
+        setRole(newRole);
+      } catch (e) {
+        if (!isAbortError(e)) console.error("syncFromSession error:", e);
+      } finally {
+        if (active) setLoadingAuth(false);
+      }
+    }
+
+    // ✅ isi email/role dari session client (tanpa /api/me)
+    void syncFromSession();
 
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      // callback ini jangan async langsung (biar tidak ada unhandled rejection)
       void (async () => {
-        const user = session?.user ?? null;
+        if (!active) return;
 
+        const user = session?.user ?? null;
         if (!user) {
           setUserEmail(null);
-          setIsAdmin(false);
+          setRole(null);
           setLoadingAuth(false);
           return;
         }
 
+        setLoadingAuth(true);
         setUserEmail(user.email ?? null);
-        await fetchRole(user.id);
+        const newRole = await fetchRole(user.id);
+        if (!active) return;
+        setRole(newRole);
         setLoadingAuth(false);
       })().catch((e) => {
         if (!isAbortError(e)) console.error("onAuthStateChange error:", e);
-        setLoadingAuth(false);
+        if (active) setLoadingAuth(false);
       });
     });
 
     return () => {
+      active = false;
       data.subscription.unsubscribe();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -95,7 +111,7 @@ export default function Navbar() {
       if (!isAbortError(e)) console.error("logout error:", e);
     } finally {
       setUserEmail(null);
-      setIsAdmin(false);
+      setRole(null);
     }
   }
 
