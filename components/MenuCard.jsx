@@ -14,12 +14,12 @@ export default function MenuCard({ data }) {
       {/* Gambar: SQUARE 1:1 (≈800x800) tanpa cropping */}
       <div className="relative w-full aspect-square bg-white">
         <Image
-          src={data.image}
+          src={data.image || "/images/placeholder.jpg"}
           alt={data.name}
           fill
           className="object-contain rounded-lg"
-          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-          priority={false}
+          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+          loading="lazy"
         />
       </div>
 

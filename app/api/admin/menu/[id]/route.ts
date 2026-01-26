@@ -7,14 +7,11 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MENU_TABLE = "menu_items"; // ✅ tabel kamu yang benar
+// SESUAIKAN kalau tabelmu bukan "menu"
+const MENU_TABLE = "menu_items";
 const PROFILE_TABLE = "profiles";
 
 type Ctx = { params: Promise<{ id: string }> };
-
-function normalizeId(idRaw: string) {
-  return /^\d+$/.test(idRaw) ? Number(idRaw) : idRaw;
-}
 
 async function requireAdmin() {
   const supabase = await createSupabaseServerClient();
@@ -32,18 +29,19 @@ async function requireAdmin() {
     .from(PROFILE_TABLE)
     .select("role")
     .eq("id", authData.user.id)
-    .maybeSingle(); // ✅ biar tidak 500 kalau row belum ada
+    .maybeSingle(); // ✅ jangan single() biar "0 row" tidak jadi 500
 
   if (profErr) {
     return {
       ok: false as const,
       status: 500,
       error: "Gagal baca profiles",
-      details: profErr.message,
+      details: profErr,
     };
   }
 
   if (!profile) {
+    // ✅ user login tapi belum punya row di profiles
     return {
       ok: false as const,
       status: 403,
@@ -58,27 +56,37 @@ async function requireAdmin() {
   return { ok: true as const };
 }
 
+function normalizeId(idRaw: string) {
+  // kalau id kamu integer (contoh /4 /44), ubah ke number biar cocok kolom int
+  return /^\d+$/.test(idRaw) ? Number(idRaw) : idRaw;
+}
+
 export async function PATCH(req: Request, ctx: Ctx) {
   try {
     const guard = await requireAdmin();
     if (!guard.ok) return NextResponse.json(guard, { status: guard.status });
 
     const { id: idRaw } = await ctx.params;
-    const id = normalizeId(idRaw);
+    if (!idRaw)
+      return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
     const body = await req.json().catch(() => null);
-    if (!body) {
+    if (!body)
       return NextResponse.json(
         { error: "Body JSON kosong/invalid" },
         { status: 400 },
       );
+
+    // ambil field yang boleh diupdate
+    const updates: Record<string, any> = {};
+    const allowed = ["name", "price", "category"] as const;
+
+    for (const k of allowed) {
+      if (body[k] !== undefined) updates[k] = body[k];
     }
 
-    // ✅ hanya field yang kamu pakai (tanpa is_available/image_url/description)
-    const updates: Record<string, any> = {};
-    if (body.name !== undefined) updates.name = body.name;
-    if (body.price !== undefined) updates.price = Number(body.price);
-    if (body.category !== undefined) updates.category = body.category;
+    // normalisasi tipe
+    if (updates.price !== undefined) updates.price = Number(updates.price);
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json(
@@ -88,14 +96,17 @@ export async function PATCH(req: Request, ctx: Ctx) {
     }
 
     const service = createSupabaseServiceClient();
+    const id = normalizeId(idRaw);
+
     const { data, error } = await service
       .from(MENU_TABLE)
       .update(updates)
       .eq("id", id)
-      .select("id,name,price,category")
+      .select()
       .maybeSingle();
 
     if (error) {
+      // ✅ balikin detail biar ketahuan akar masalah
       return NextResponse.json(
         {
           error: error.message,
@@ -122,9 +133,12 @@ export async function DELETE(_req: Request, ctx: Ctx) {
     if (!guard.ok) return NextResponse.json(guard, { status: guard.status });
 
     const { id: idRaw } = await ctx.params;
-    const id = normalizeId(idRaw);
+    if (!idRaw)
+      return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
     const service = createSupabaseServiceClient();
+    const id = normalizeId(idRaw);
+
     const { error } = await service.from(MENU_TABLE).delete().eq("id", id);
 
     if (error) {

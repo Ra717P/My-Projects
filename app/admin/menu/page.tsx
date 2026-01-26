@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import MenuTable, { MenuItem } from "@/components/admin/MenuTable";
+import MenuForm from "@/components/admin/MenuForm";
 
 export default function AdminMenuPage() {
   const [items, setItems] = useState<MenuItem[]>([]);
@@ -18,7 +19,7 @@ export default function AdminMenuPage() {
 
     if (!res.ok) {
       setErr(
-        json.error ?? "Gagal mengambil menu. Pastikan /api/menu (GET) ada."
+        json.error ?? "Gagal mengambil menu. Pastikan /api/menu (GET) ada.",
       );
       setItems([]);
       setLoading(false);

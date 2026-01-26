@@ -4,9 +4,7 @@ export default function AdminHome() {
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Dashboard Admin</h1>
-      <p className="text-sm text-gray-600">
-        Kelola menu (CRUD) dan lihat transaksi.
-      </p>
+      <p className="text-sm text-gray-600">Kelola menu dan lihat transaksi.</p>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Link

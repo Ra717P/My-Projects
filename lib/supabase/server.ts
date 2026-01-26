@@ -1,4 +1,4 @@
-// /lib/supabase/server.ts
+// lib/supabase/server.ts
 import "server-only";
 
 import { cookies } from "next/headers";
@@ -6,8 +6,9 @@ import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 
 function requireEnv(name: string, value: string | undefined) {
-  if (!value) throw new Error(`Missing env ${name}`);
-  return value;
+  const v = value?.trim();
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
 }
 
 const SUPABASE_URL = requireEnv(
@@ -15,11 +16,7 @@ const SUPABASE_URL = requireEnv(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
 );
 
-/**
- * Supabase public key untuk SSR/browser.
- * Rekomendasi terbaru umumnya pakai variable NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
- * tapi value "anon key" juga boleh dipakai selama masa transisi. :contentReference[oaicite:3]{index=3}
- */
+// Supabase publishable/anon key (untuk SSR/session)
 const SUPABASE_PUBLIC_KEY = requireEnv(
   "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY",
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
@@ -28,7 +25,7 @@ const SUPABASE_PUBLIC_KEY = requireEnv(
 
 /**
  * Client untuk Server Components / Route Handlers (pakai cookies session).
- * Konsepnya mengikuti panduan Supabase SSR createServerClient + cookies getAll/setAll. :contentReference[oaicite:4]{index=4}
+ * Next.js 15: cookies() async -> WAJIB await cookies()
  */
 export async function createSupabaseServerClient() {
   const cookieStore = await cookies();
@@ -44,7 +41,7 @@ export async function createSupabaseServerClient() {
             cookieStore.set(name, value, options);
           });
         } catch {
-          // Di Server Components tertentu cookies bisa read-only; ini aman diabaikan.
+          // Di beberapa konteks (mis. Server Components tertentu) cookies read-only; aman diabaikan.
         }
       },
     },
@@ -52,16 +49,17 @@ export async function createSupabaseServerClient() {
 }
 
 /**
- * Client "service role/secret" untuk operasi admin backend (TANPA session cookies).
- * Gunakan hanya di server (Route Handler / Server Action), jangan pernah expose ke client. :contentReference[oaicite:5]{index=5}
+ * Client service role untuk operasi admin backend (tanpa session cookies).
+ * Gunakan hanya di server (Route Handler / Server Action). Jangan expose ke client.
  */
 export function createSupabaseServiceClient() {
-  const serviceKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SECRET_KEY;
+  const serviceKey = (
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SECRET_KEY
+  )?.trim();
 
   if (!serviceKey) {
     throw new Error(
-      "Missing env SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SECRET_KEY)",
+      "Missing env: SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SECRET_KEY)",
     );
   }
 
@@ -74,6 +72,6 @@ export function createSupabaseServiceClient() {
   });
 }
 
-// Backward-compatible exports (kalau terlanjur import nama ini)
+// Backward-compatible exports (kalau terlanjur dipakai di file lain)
 export const supabaseServer = createSupabaseServerClient;
 export const supabaseService = createSupabaseServiceClient;

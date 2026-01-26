@@ -7,9 +7,6 @@ export type MenuItem = {
   name: string;
   price: number;
   category?: string | null;
-  image_url?: string | null;
-  description?: string | null;
-  is_available?: boolean | null;
 };
 
 export default function MenuTable({
@@ -27,7 +24,6 @@ export default function MenuTable({
             <th className="p-3">Nama</th>
             <th className="p-3">Kategori</th>
             <th className="p-3">Harga</th>
-            <th className="p-3">Status</th>
             <th className="p-3">Aksi</th>
           </tr>
         </thead>
@@ -37,9 +33,6 @@ export default function MenuTable({
               <td className="p-3">{it.name}</td>
               <td className="p-3">{it.category ?? "-"}</td>
               <td className="p-3">{it.price}</td>
-              <td className="p-3">
-                {it.is_available ? "Available" : "Hidden"}
-              </td>
               <td className="p-3">
                 <div className="flex flex-wrap gap-2">
                   <Link
@@ -61,7 +54,7 @@ export default function MenuTable({
 
           {items.length === 0 && (
             <tr>
-              <td colSpan={5} className="p-3 text-gray-500">
+              <td colSpan={4} className="p-3 text-gray-500">
                 Belum ada menu.
               </td>
             </tr>
