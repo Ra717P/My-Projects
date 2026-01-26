@@ -1,149 +1,41 @@
+// app/api/admin/menu/route.ts
 import { NextResponse } from "next/server";
-import {
-  createSupabaseServerClient,
-  createSupabaseServiceClient,
-} from "@/lib/supabase/server";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MENU_TABLE = "menu_items"; // ✅ tabel kamu yang benar
-const PROFILE_TABLE = "profiles";
+const MENU_TABLE = "menu_items";
 
-type Ctx = { params: Promise<{ id: string }> };
-
-function normalizeId(idRaw: string) {
-  return /^\d+$/.test(idRaw) ? Number(idRaw) : idRaw;
+export async function GET() {
+  const service = createSupabaseServiceClient();
+  const { data, error } = await service
+    .from(MENU_TABLE)
+    .select("*")
+    .order("id", { ascending: true });
+  if (error)
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ data });
 }
 
-async function requireAdmin() {
-  const supabase = await createSupabaseServerClient();
+// (opsional) POST untuk tambah menu
+export async function POST(req: Request) {
+  const body = await req.json().catch(() => null);
+  if (!body)
+    return NextResponse.json({ error: "Body JSON invalid" }, { status: 400 });
 
-  const { data: authData, error: authErr } = await supabase.auth.getUser();
-  if (authErr || !authData?.user) {
-    return {
-      ok: false as const,
-      status: 401,
-      error: authErr?.message ?? "Unauthorized",
-    };
-  }
+  const service = createSupabaseServiceClient();
+  const { data, error } = await service
+    .from(MENU_TABLE)
+    .insert({
+      name: body.name,
+      price: Number(body.price),
+      category: body.category ?? null,
+    })
+    .select()
+    .single();
 
-  const { data: profile, error: profErr } = await supabase
-    .from(PROFILE_TABLE)
-    .select("role")
-    .eq("id", authData.user.id)
-    .maybeSingle(); // ✅ biar tidak 500 kalau row belum ada
-
-  if (profErr) {
-    return {
-      ok: false as const,
-      status: 500,
-      error: "Gagal baca profiles",
-      details: profErr.message,
-    };
-  }
-
-  if (!profile) {
-    return {
-      ok: false as const,
-      status: 403,
-      error: "Role belum diset di profiles",
-    };
-  }
-
-  if (profile.role !== "admin") {
-    return { ok: false as const, status: 403, error: "Forbidden (admin only)" };
-  }
-
-  return { ok: true as const };
-}
-
-export async function PATCH(req: Request, ctx: Ctx) {
-  try {
-    const guard = await requireAdmin();
-    if (!guard.ok) return NextResponse.json(guard, { status: guard.status });
-
-    const { id: idRaw } = await ctx.params;
-    const id = normalizeId(idRaw);
-
-    const body = await req.json().catch(() => null);
-    if (!body) {
-      return NextResponse.json(
-        { error: "Body JSON kosong/invalid" },
-        { status: 400 },
-      );
-    }
-
-    // ✅ hanya field yang kamu pakai (tanpa is_available/image_url/description)
-    const updates: Record<string, any> = {};
-    if (body.name !== undefined) updates.name = body.name;
-    if (body.price !== undefined) updates.price = Number(body.price);
-    if (body.category !== undefined) updates.category = body.category;
-
-    if (Object.keys(updates).length === 0) {
-      return NextResponse.json(
-        { error: "Tidak ada field untuk diupdate" },
-        { status: 400 },
-      );
-    }
-
-    const service = createSupabaseServiceClient();
-    const { data, error } = await service
-      .from(MENU_TABLE)
-      .update(updates)
-      .eq("id", id)
-      .select("id,name,price,category")
-      .maybeSingle();
-
-    if (error) {
-      return NextResponse.json(
-        {
-          error: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint,
-        },
-        { status: 500 },
-      );
-    }
-
-    return NextResponse.json({ ok: true, data });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message ?? "Server error" },
-      { status: 500 },
-    );
-  }
-}
-
-export async function DELETE(_req: Request, ctx: Ctx) {
-  try {
-    const guard = await requireAdmin();
-    if (!guard.ok) return NextResponse.json(guard, { status: guard.status });
-
-    const { id: idRaw } = await ctx.params;
-    const id = normalizeId(idRaw);
-
-    const service = createSupabaseServiceClient();
-    const { error } = await service.from(MENU_TABLE).delete().eq("id", id);
-
-    if (error) {
-      return NextResponse.json(
-        {
-          error: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint,
-        },
-        { status: 500 },
-      );
-    }
-
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message ?? "Server error" },
-      { status: 500 },
-    );
-  }
+  if (error)
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true, data });
 }

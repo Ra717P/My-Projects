@@ -1,460 +1,130 @@
+// app/api/checkout/route.ts
+import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function supabaseService() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-  if (!url || !key)
-    throw new Error("ENV Supabase belum lengkap (URL / SERVICE_ROLE).");
-  return createClient(url, key, { auth: { persistSession: false } });
+function requireEnv(name: string, v?: string) {
+  if (!v) throw new Error(`Missing env ${name}`);
+  return v;
 }
 
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
+const SUPABASE_URL = requireEnv(
+  "NEXT_PUBLIC_SUPABASE_URL",
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+);
 
-// helper untuk error yang rapi + ada step
-function fail(step: string, message: string, status = 500, extra?: any) {
-  // log di terminal biar kamu lihat detailnya
-  console.error(`[orders][${step}] ${message}`, extra ?? "");
-  return json(
-    {
-      ok: false,
-      step,
-      message,
-      // extra hanya untuk debugging (boleh kamu hapus kalau sudah beres)
-      extra: extra ?? null,
-    },
-    status,
-  );
-}
+const SERVICE_KEY = requireEnv(
+  "SUPABASE_SERVICE_ROLE_KEY",
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+);
+
+const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false,
+  },
+});
+
+type CheckoutItem = { menu_item_id: number | string; qty: number };
+type CheckoutBody = {
+  customer_phone?: string | null;
+  note?: string | null;
+  items: CheckoutItem[];
+};
 
 export async function POST(req: Request) {
-  const supabase = (() => {
-    try {
-      return supabaseService();
-    } catch (e: any) {
-      return null;
+  try {
+    const body = (await req.json().catch(() => null)) as CheckoutBody | null;
+    if (!body) {
+      return NextResponse.json({ error: "Body JSON invalid" }, { status: 400 });
     }
-  })();
-  import { createClient } from "@supabase/supabase-js";
 
-  export const runtime = "nodejs";
-  export const dynamic = "force-dynamic";
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (items.length === 0) {
+      return NextResponse.json({ error: "Items kosong" }, { status: 400 });
+    }
 
-  function supabaseService() {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-    if (!url || !key)
-      throw new Error("ENV Supabase belum lengkap (URL / SERVICE_ROLE).");
-    return createClient(url, key, { auth: { persistSession: false } });
-  }
+    // validasi qty & kumpulkan menu ids
+    const menuIds = items
+      .map((it) => it?.menu_item_id)
+      .filter((x) => x !== null && x !== undefined);
 
-  function json(data: unknown, status = 200) {
-    return new Response(JSON.stringify(data), {
-      status,
-      headers: { "content-type": "application/json" },
-    });
-  }
-
-  // helper untuk error yang rapi + ada step
-  function fail(step: string, message: string, status = 500, extra?: any) {
-    // log di terminal biar kamu lihat detailnya
-    console.error(`[orders][${step}] ${message}`, extra ?? "");
-    return json(
-      {
-        ok: false,
-        step,
-        message,
-        // extra hanya untuk debugging (boleh kamu hapus kalau sudah beres)
-        extra: extra ?? null,
-      },
-      status,
-    );
-  }
-
-  export async function POST(req: Request) {
-    const supabase = (() => {
-      try {
-        return supabaseService();
-      } catch (e: any) {
-        return null;
+    for (const it of items) {
+      const q = Number(it.qty);
+      if (!Number.isFinite(q) || q <= 0) {
+        return NextResponse.json({ error: "qty harus > 0" }, { status: 400 });
       }
-    })();
-
-    if (!supabase) {
-      return fail(
-        "ENV",
-        "Tidak bisa membuat Supabase client. Cek NEXT_PUBLIC_SUPABASE_URL & SUPABASE_SERVICE_ROLE_KEY",
-        500,
-      );
     }
 
-    let body: any;
-    try {
-      body = await req.json();
-    } catch (e: any) {
-      return fail("PARSE_BODY", "Body JSON tidak valid", 400, e?.message);
-    }
-
-    // ============= STEP: VALIDATE ITEMS =============
-    if (!Array.isArray(body?.items) || body.items.length === 0) {
-      return fail(
-        "VALIDATE_ITEMS",
-        "Items wajib diisi (minimal 1)",
-        400,
-        body?.items,
-      );
-    }
-
-    type IncomingItem = {
-      menuItemId?: number | string;
-      id?: number | string;
-      menu_item_id?: number | string;
-      qty?: number | string;
-      quantity?: number | string;
-    };
-
-    const itemsReq = (body.items as IncomingItem[]).map((it) => {
-      const menuItemId = Number(it.menuItemId ?? it.id ?? it.menu_item_id);
-      const qtyRaw = Number(it.qty ?? it.quantity ?? 1);
-      const qty =
-        Number.isFinite(qtyRaw) && qtyRaw > 0 ? Math.round(qtyRaw) : 1;
-      return { menuItemId, qty };
-    });
-
-    if (
-      itemsReq.some((x) => !Number.isInteger(x.menuItemId) || x.menuItemId <= 0)
-    ) {
-      return fail(
-        "VALIDATE_ITEMS",
-        "Ada menuItemId tidak valid",
-        400,
-        itemsReq,
-      );
-    }
-    if (itemsReq.some((x) => !Number.isInteger(x.qty) || x.qty <= 0)) {
-      return fail("VALIDATE_ITEMS", "Ada qty tidak valid", 400, itemsReq);
-    }
-
-    // ============= STEP: FETCH MENU (ANTI MANIPULASI) =============
-    const uniqueIds = Array.from(new Set(itemsReq.map((x) => x.menuItemId)));
-
-    const { data: menuRows, error: menuErr } = await supabase
+    // ambil harga asli dari menu_items
+    const { data: menus, error: menuErr } = await supabase
       .from("menu_items")
-      .select("id, name, price")
-      .in("id", uniqueIds);
+      .select("id,price,name")
+      .in("id", menuIds);
 
     if (menuErr) {
-      // biasanya: tabel tidak ada, kolom tidak ada, RLS, atau koneksi
-      return fail("FETCH_MENU", "Gagal mengambil data menu", 500, menuErr);
-    }
-    if (!menuRows || menuRows.length === 0) {
-      return fail(
-        "FETCH_MENU",
-        "Menu tidak ditemukan (tabel kosong atau ID tidak cocok)",
-        400,
-        {
-          uniqueIds,
-          menuRows,
-        },
-      );
+      return NextResponse.json({ error: menuErr.message }, { status: 500 });
     }
 
-    const priceById = new Map<number, number>(
-      menuRows.map((m: any) => [Number(m.id), Number(m.price)]),
-    );
-    const nameById = new Map<number, string>(
-      menuRows.map((m: any) => [Number(m.id), String(m.name)]),
-    );
+    const menuMap = new Map<any, number>();
+    (menus ?? []).forEach((m: any) => menuMap.set(m.id, Number(m.price ?? 0)));
 
-    const missingIds = uniqueIds.filter((id) => !priceById.has(id));
-    if (missingIds.length > 0) {
-      return fail("FETCH_MENU", "Ada ID menu yang tidak ada di DB", 400, {
-        missingIds,
-        uniqueIds,
-      });
-    }
-
-    // ============= STEP: BUILD ITEMS + TOTAL =============
-    const item_details = itemsReq.map((it) => {
-      const price = Math.round(Number(priceById.get(it.menuItemId)));
-      const name = (
-        nameById.get(it.menuItemId) ?? `Item ${it.menuItemId}`
-      ).slice(0, 50);
-      return { id: it.menuItemId, name, price, qty: it.qty };
+    const orderItemsRows = items.map((it) => {
+      const price = menuMap.get(it.menu_item_id);
+      if (price === undefined) {
+        throw new Error(
+          `Menu tidak ditemukan untuk id: ${String(it.menu_item_id)}`,
+        );
+      }
+      return {
+        menu_item_id: it.menu_item_id,
+        qty: Number(it.qty),
+        price: Number(price),
+      };
     });
 
-    const invalidPrice = item_details.filter(
-      (x) => !Number.isFinite(x.price) || x.price <= 0,
-    );
-    if (invalidPrice.length > 0) {
-      return fail(
-        "CALC_TOTAL",
-        "Ada item dengan harga tidak valid",
-        400,
-        invalidPrice,
-      );
-    }
+    const total = orderItemsRows.reduce((s, r) => s + r.price * r.qty, 0);
 
-    const gross_amount = item_details.reduce(
-      (sum, it) => sum + it.price * it.qty,
-      0,
-    );
-    if (!Number.isFinite(gross_amount) || gross_amount <= 0) {
-      return fail(
-        "CALC_TOTAL",
-        "Total tidak valid setelah dihitung server",
-        400,
-        { gross_amount, item_details },
-      );
-    }
-
-    // ============= STEP: INSERT ORDER =============
-    const customer = body.customer || {};
-    const customerName = customer.first_name
-      ? `${customer.first_name}${
-          customer.last_name ? " " + customer.last_name : ""
-        }`
-      : (body.customerName ?? null);
-
-    // Status final tanpa Midtrans:
-    // PENTING: sesuaikan dengan enum di DB kamu.
-    // Kalau enum kamu lowercase, ini aman.
-    const FINAL_STATUS = "settlement";
-
-    // NOTE: aku sengaja TIDAK kirim customer_phone lagi,
-    // biar aman kalau kolomnya tidak ada di tabel orders.
+    // insert order
     const { data: order, error: orderErr } = await supabase
       .from("orders")
       .insert({
-        customer_name: customerName,
-        note: body.note || null,
-        total: gross_amount,
-        status: FINAL_STATUS,
+        customer_phone: body.customer_phone ?? null,
+        note: body.note ?? null,
+        status: "PENDING",
+        total,
       })
-      .select("*")
+      .select("id")
       .single();
 
-    if (orderErr || !order) {
-      return fail("INSERT_ORDER", "Gagal membuat order", 500, orderErr);
+    if (orderErr) {
+      return NextResponse.json({ error: orderErr.message }, { status: 500 });
     }
 
-    // ============= STEP: INSERT ORDER ITEMS =============
-    const itemsInsert = item_details.map((it) => ({
+    // insert order items
+    const rowsWithOrderId = orderItemsRows.map((r) => ({
+      ...r,
       order_id: order.id,
-      menu_item_id: Number(it.id),
-      qty: it.qty,
-      price: it.price,
     }));
 
     const { error: itemsErr } = await supabase
       .from("order_items")
-      .insert(itemsInsert);
+      .insert(rowsWithOrderId);
 
     if (itemsErr) {
-      // rollback biar tidak ada order "yatim"
-      try {
-        await supabase.from("orders").delete().eq("id", order.id);
-      } catch (e: any) {
-        console.error("[orders][ROLLBACK] gagal hapus order", e?.message ?? e);
-      }
-      return fail("INSERT_ITEMS", "Gagal menyimpan order_items", 500, itemsErr);
+      // rollback: hapus order jika item gagal
+      await supabase.from("orders").delete().eq("id", order.id);
+      return NextResponse.json({ error: itemsErr.message }, { status: 500 });
     }
 
-    const orderId = String(order.order_code ?? order.id);
-
-    return json(
-      {
-        ok: true,
-        message: "Pembayaran sukses!",
-        orderId,
-        status: FINAL_STATUS,
-        total: gross_amount,
-      },
-      200,
-    );
-  }
-
-  if (!supabase) {
-    return fail(
-      "ENV",
-      "Tidak bisa membuat Supabase client. Cek NEXT_PUBLIC_SUPABASE_URL & SUPABASE_SERVICE_ROLE_KEY",
-      500,
-    );
-  }
-
-  let body: any;
-  try {
-    body = await req.json();
+    return NextResponse.json({ ok: true, order_id: order.id });
   } catch (e: any) {
-    return fail("PARSE_BODY", "Body JSON tidak valid", 400, e?.message);
-  }
-
-  // ============= STEP: VALIDATE ITEMS =============
-  if (!Array.isArray(body?.items) || body.items.length === 0) {
-    return fail(
-      "VALIDATE_ITEMS",
-      "Items wajib diisi (minimal 1)",
-      400,
-      body?.items,
+    return NextResponse.json(
+      { error: e?.message ?? "Server error" },
+      { status: 500 },
     );
   }
-
-  type IncomingItem = {
-    menuItemId?: number | string;
-    id?: number | string;
-    menu_item_id?: number | string;
-    qty?: number | string;
-    quantity?: number | string;
-  };
-
-  const itemsReq = (body.items as IncomingItem[]).map((it) => {
-    const menuItemId = Number(it.menuItemId ?? it.id ?? it.menu_item_id);
-    const qtyRaw = Number(it.qty ?? it.quantity ?? 1);
-    const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? Math.round(qtyRaw) : 1;
-    return { menuItemId, qty };
-  });
-
-  if (
-    itemsReq.some((x) => !Number.isInteger(x.menuItemId) || x.menuItemId <= 0)
-  ) {
-    return fail("VALIDATE_ITEMS", "Ada menuItemId tidak valid", 400, itemsReq);
-  }
-  if (itemsReq.some((x) => !Number.isInteger(x.qty) || x.qty <= 0)) {
-    return fail("VALIDATE_ITEMS", "Ada qty tidak valid", 400, itemsReq);
-  }
-
-  // ============= STEP: FETCH MENU (ANTI MANIPULASI) =============
-  const uniqueIds = Array.from(new Set(itemsReq.map((x) => x.menuItemId)));
-
-  const { data: menuRows, error: menuErr } = await supabase
-    .from("menu_items")
-    .select("id, name, price")
-    .in("id", uniqueIds);
-
-  if (menuErr) {
-    // biasanya: tabel tidak ada, kolom tidak ada, RLS, atau koneksi
-    return fail("FETCH_MENU", "Gagal mengambil data menu", 500, menuErr);
-  }
-  if (!menuRows || menuRows.length === 0) {
-    return fail(
-      "FETCH_MENU",
-      "Menu tidak ditemukan (tabel kosong atau ID tidak cocok)",
-      400,
-      {
-        uniqueIds,
-        menuRows,
-      },
-    );
-  }
-
-  const priceById = new Map<number, number>(
-    menuRows.map((m: any) => [Number(m.id), Number(m.price)]),
-  );
-  const nameById = new Map<number, string>(
-    menuRows.map((m: any) => [Number(m.id), String(m.name)]),
-  );
-
-  const missingIds = uniqueIds.filter((id) => !priceById.has(id));
-  if (missingIds.length > 0) {
-    return fail("FETCH_MENU", "Ada ID menu yang tidak ada di DB", 400, {
-      missingIds,
-      uniqueIds,
-    });
-  }
-
-  // ============= STEP: BUILD ITEMS + TOTAL =============
-  const item_details = itemsReq.map((it) => {
-    const price = Math.round(Number(priceById.get(it.menuItemId)));
-    const name = (nameById.get(it.menuItemId) ?? `Item ${it.menuItemId}`).slice(
-      0,
-      50,
-    );
-    return { id: it.menuItemId, name, price, qty: it.qty };
-  });
-
-  const invalidPrice = item_details.filter(
-    (x) => !Number.isFinite(x.price) || x.price <= 0,
-  );
-  if (invalidPrice.length > 0) {
-    return fail(
-      "CALC_TOTAL",
-      "Ada item dengan harga tidak valid",
-      400,
-      invalidPrice,
-    );
-  }
-
-  const gross_amount = item_details.reduce(
-    (sum, it) => sum + it.price * it.qty,
-    0,
-  );
-  if (!Number.isFinite(gross_amount) || gross_amount <= 0) {
-    return fail(
-      "CALC_TOTAL",
-      "Total tidak valid setelah dihitung server",
-      400,
-      { gross_amount, item_details },
-    );
-  }
-
-  // ============= STEP: INSERT ORDER =============
-  const customer = body.customer || {};
-  const customerName = customer.first_name
-    ? `${customer.first_name}${
-        customer.last_name ? " " + customer.last_name : ""
-      }`
-    : (body.customerName ?? null);
-
-  // NOTE: aku sengaja TIDAK kirim customer_phone lagi,
-  // biar aman kalau kolomnya tidak ada di tabel orders.
-  const { data: order, error: orderErr } = await supabase
-    .from("orders")
-    .insert({
-      customer_name: customerName,
-      note: body.note || null,
-      total: gross_amount,
-      status: "SETTLEMENT",
-    })
-    .select("*")
-    .single();
-
-  if (orderErr || !order) {
-    return fail("INSERT_ORDER", "Gagal membuat order", 500, orderErr);
-  }
-
-  // ============= STEP: INSERT ORDER ITEMS =============
-  const itemsInsert = item_details.map((it) => ({
-    order_id: order.id,
-    menu_item_id: Number(it.id),
-    qty: it.qty,
-    price: it.price,
-  }));
-
-  const { error: itemsErr } = await supabase
-    .from("order_items")
-    .insert(itemsInsert);
-
-  if (itemsErr) {
-    return fail("INSERT_ITEMS", "Gagal menyimpan order_items", 500, itemsErr);
-  }
-
-  const orderId = String(order.order_code ?? order.id);
-
-  return json(
-    {
-      ok: true,
-      message: "Pembayaran sukses!",
-      orderId,
-      status: "SETTLEMENT",
-      total: gross_amount,
-    },
-    200,
-  );
 }

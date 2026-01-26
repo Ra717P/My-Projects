@@ -4,7 +4,7 @@ import { useContext, useMemo, useState } from "react";
 import { CartContext } from "@/context/CartContext";
 
 // Helper: normalisasi harga (terima number atau string "Rp 20.000")
-function toNumberIDR(value) {
+function toNumberIDR(value: any) {
   if (typeof value === "number") return value;
   if (!value) return 0;
   const clean = String(value).replace(/[^0-9]/g, "");
@@ -12,7 +12,7 @@ function toNumberIDR(value) {
 }
 
 // Helper: format ke Rupiah "Rp20.000"
-function formatIDR(num) {
+function formatIDR(num: number) {
   try {
     return new Intl.NumberFormat("id-ID", {
       style: "currency",
@@ -26,12 +26,14 @@ function formatIDR(num) {
 }
 
 export default function CheckoutPage() {
-  const { cart, clearCart } = useContext(CartContext);
+  const ctx = useContext(CartContext);
+  const cart = ctx?.cart ?? [];
+  const clearCart = ctx?.clearCart ?? (() => {});
   const [loading, setLoading] = useState(false);
 
-  // Total dihitung dari cart (pakai qty dari CartContext)
+  // Total dihitung dari cart (untuk tampilan saja)
   const computedTotal = useMemo(() => {
-    return cart.reduce((acc, item) => {
+    return cart.reduce((acc: number, item: any) => {
       const price = toNumberIDR(item.price);
       const qty = item.qty ?? 1;
       return acc + price * qty;
@@ -41,12 +43,12 @@ export default function CheckoutPage() {
   // Data tampilan
   const displayCart = useMemo(
     () =>
-      cart.map((item) => {
+      cart.map((item: any) => {
         const priceNumber = toNumberIDR(item.price);
         const qty = item.qty ?? 1;
 
         return {
-          id: item.id,
+          id: item.id, // ini harus sama dengan menu_items.id
           name: item.name,
           priceNumber,
           priceDisplay: formatIDR(priceNumber),
@@ -54,7 +56,7 @@ export default function CheckoutPage() {
           image: item.image ?? null,
         };
       }),
-    [cart]
+    [cart],
   );
 
   const handleCheckout = async () => {
@@ -65,17 +67,19 @@ export default function CheckoutPage() {
 
     setLoading(true);
     try {
-      // Payload untuk backend (backend tetap ambil harga asli dari Supabase)
+      // ✅ format payload sesuai API /api/checkout
       const payload = {
+        // server akan ambil harga asli dari menu_items (lebih aman)
         items: displayCart.map((it) => ({
-          id: it.id,
+          menu_item_id: it.id,
           qty: it.qty,
         })),
-        total: computedTotal,
-        currency: "IDR",
+        // opsional
+        customer_phone: null,
+        note: null,
       };
 
-      const res = await fetch("/api/orders", {
+      const res = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -84,16 +88,15 @@ export default function CheckoutPage() {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        throw new Error(data?.message || "Gagal membuat pesanan.");
+        throw new Error(data?.error || "Gagal membuat pesanan.");
       }
 
-      // Karena sekarang "langsung sukses"
-      alert(`Pembayaran sukses!\nOrder: ${data?.orderId || "-"}`);
+      alert(`Checkout berhasil!\nOrder ID: ${data?.order_id || "-"}`);
       clearCart();
 
-      // Optional redirect:
-      // window.location.href = `/order/success?order_id=${data.orderId}`;
-    } catch (e) {
+      // optional redirect:
+      // window.location.href = `/order/success?order_id=${data.order_id}`;
+    } catch (e: any) {
       console.error("[checkout] error:", e);
       alert(e?.message || "Terjadi kesalahan saat checkout.");
     } finally {
@@ -130,6 +133,7 @@ export default function CheckoutPage() {
                     </p>
                   </div>
                 </div>
+
                 <div className="font-semibold">
                   {formatIDR(item.priceNumber * item.qty)}
                 </div>
@@ -147,7 +151,7 @@ export default function CheckoutPage() {
             disabled={loading}
             className="mt-6 bg-[#d4a373] px-6 py-3 rounded-lg text-white font-semibold hover:bg-[#c08b5a] disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {loading ? "Memproses..." : "Konfirmasi Pembayaran"}
+            {loading ? "Memproses..." : "Konfirmasi Pesanan"}
           </button>
         </>
       )}
